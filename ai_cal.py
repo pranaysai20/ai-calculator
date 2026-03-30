@@ -3,6 +3,9 @@ import mediapipe as mp
 import time
 import math
 
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+
 # -------------------------------
 # Button Class
 # -------------------------------
@@ -30,10 +33,10 @@ class Button:
 # -------------------------------
 # Create Calculator Buttons
 # -------------------------------
-buttonListValues = [['7', '8', '9', '/', '%'],
-                    ['4', '5', '6', '*', '^'],
+buttonListValues = [['7', '8', '9', '/'],
+                    ['4', '5', '6', '*'],
                     ['1', '2', '3', '-', 'C'],
-                    ['0', '.', '=', '+', ]]
+                    ['0', '.', '=', '+']]
 
 
 buttonList = []
@@ -47,9 +50,27 @@ for y in range(len(buttonListValues)):
 # -------------------------------
 # Initialize Mediapipe Hands
 # -------------------------------
-mpHands = mp.solutions.hands
-hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
-mpDraw = mp.solutions.drawing_utils
+DETECTION_RESULT = None
+
+def save_result(result, unused_output_image, timestamp_ms):
+    global DETECTION_RESULT
+    DETECTION_RESULT = result
+
+mp_hands = mp.tasks.vision.HandLandmarksConnections
+mp_drawing = mp.tasks.vision.drawing_utils
+mp_drawing_styles = mp.tasks.vision.drawing_styles
+
+base_options = python.BaseOptions(model_asset_path='hand_landmarker.task')
+options = vision.HandLandmarkerOptions(
+    base_options=base_options,
+    running_mode=vision.RunningMode.LIVE_STREAM,
+    num_hands=1,
+    min_hand_detection_confidence=0.7,
+    min_hand_presence_confidence=0.7,
+    min_tracking_confidence=0.7,
+    result_callback=save_result
+)
+detector = vision.HandLandmarker.create_from_options(options)
 
 cap = cv2.VideoCapture(0)
 cap.set(3, 1280)  # width
@@ -69,19 +90,20 @@ while True:
         break
     img = cv2.flip(img, 1)
     imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = hands.process(imgRGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=imgRGB)
+    detector.detect_async(mp_image, time.time_ns() // 1_000_000)
 
     index_tip = None
     thumb_tip = None
 
-    if results.multi_hand_landmarks:
-        handLms = results.multi_hand_landmarks[0]
+    if DETECTION_RESULT and DETECTION_RESULT.hand_landmarks:
+        hand_landmarks = DETECTION_RESULT.hand_landmarks[0]
         h, w, c = img.shape
-        index_tip = (int(handLms.landmark[8].x * w), int(handLms.landmark[8].y * h))
-        thumb_tip = (int(handLms.landmark[4].x * w), int(handLms.landmark[4].y * h))
+        index_tip = (int(hand_landmarks[8].x * w), int(hand_landmarks[8].y * h))
+        thumb_tip = (int(hand_landmarks[4].x * w), int(hand_landmarks[4].y * h))
 
         # Draw landmarks
-        mpDraw.draw_landmarks(img, handLms, mpHands.HAND_CONNECTIONS)
+        mp_drawing.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS, mp_drawing_styles.get_default_hand_landmarks_style(), mp_drawing_styles.get_default_hand_connections_style())
 
         # Draw fingertips
         cv2.circle(img, index_tip, 10, (0, 0, 255), -1)
@@ -126,5 +148,6 @@ while True:
     if key == ord('q'):
         break
 
+detector.close()
 cap.release()
 cv2.destroyAllWindows()
